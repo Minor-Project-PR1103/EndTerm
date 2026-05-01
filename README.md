@@ -22,12 +22,55 @@
 
 ## Quick Start
 
-### 1. Prerequisites
+### Option A: Run with Docker
+
+This is the recommended path for end users. It starts the web app and keeps
+uploaded photos, generated clusters, config changes, logs, and model downloads
+in a local `data/` folder.
+
+```bash
+docker compose up --build
+```
+
+Open the app:
+
+```text
+http://localhost:5000
+```
+
+The first pipeline run may download the InsightFace `buffalo_l` model pack. The
+download is cached under `data/`, so later runs stay offline unless you remove
+that folder.
+
+Useful Docker paths:
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./data/photos` | `/data/photos` | Uploaded/input photos |
+| `./data/output` | `/data/output` | Person folders, metadata, logs |
+| `./data/config.yaml` | `/data/config.yaml` | Runtime configuration |
+
+If you do not want Compose:
+
+```bash
+docker build -t photo-segregator .
+docker run --rm -p 5000:5000 -v "%cd%/data:/data" photo-segregator
+```
+
+On Linux/macOS, use:
+
+```bash
+docker run --rm -p 5000:5000 -v "$PWD/data:/data" photo-segregator
+```
+
+### Option B: Run Locally with Python
+
+#### 1. Prerequisites
 
 - Python 3.8+
 - NVIDIA GPU recommended (works on CPU too)
 
-### 2. Install Dependencies
+#### 2. Install Dependencies
 
 ```bash
 # Create a virtual environment (recommended)
@@ -36,7 +79,7 @@ venv\Scripts\activate    # Windows
 # source venv/bin/activate  # Linux/Mac
 
 # Install core packages
-pip install numpy opencv-python Pillow PyYAML tqdm scikit-learn scikit-image matplotlib seaborn
+pip install numpy opencv-python-headless Pillow PyYAML tqdm scikit-learn scikit-image matplotlib seaborn
 pip install onnxruntime umap-learn easydict setuptools wheel Cython pytest
 
 # Install insightface (may need patching on Python 3.13+)
@@ -51,7 +94,7 @@ pip install insightface
 
 > **Note on first run**: InsightFace will automatically download the `buffalo_l` model pack (~300MB) on the first run. This requires an internet connection the first time only.
 
-### 3. Run the Pipeline
+#### 3. Run the Pipeline
 
 ```bash
 # Basic usage: process a folder of photos
@@ -64,7 +107,7 @@ python main.py --input ./photos --output ./output --config config.yaml
 python main.py --input ./photos --output ./output --incremental
 ```
 
-### 4. Review Uncertain Faces
+#### 4. Review Uncertain Faces
 
 ```bash
 python main.py --review --output ./output
@@ -80,7 +123,7 @@ This launches an interactive CLI where you can:
 
 After review, re-run the pipeline to apply learned corrections.
 
-### 5. Evaluate Clustering Quality
+#### 5. Evaluate Clustering Quality
 
 ```bash
 # Requires a ground-truth JSON file
@@ -97,7 +140,7 @@ Ground-truth format (`labels.json`):
 }
 ```
 
-### 6. Calibrate Parameters
+#### 6. Calibrate Parameters
 
 ```bash
 python main.py --calibrate --input ./photos --ground-truth ./labels.json

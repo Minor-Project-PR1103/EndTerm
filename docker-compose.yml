@@ -1,0 +1,16 @@
+services:
+  photo-segregator:
+    build: .
+    image: photo-segregator:latest
+    container_name: photo-segregator
+    ports:
+      - "5000:5000"
+    environment:
+      PHOTO_SEGREGATOR_DATA_DIR: /data
+      PHOTO_SEGREGATOR_INPUT_DIR: /data/photos
+      PHOTO_SEGREGATOR_OUTPUT_DIR: /data/output
+      PHOTO_SEGREGATOR_CONFIG: /data/config.yaml
+      PHOTO_SEGREGATOR_MAX_UPLOAD_MB: "2048"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

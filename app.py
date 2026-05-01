@@ -13,21 +13,38 @@ import json
 import logging
 import os
 import queue
-import shutil
 import threading
 import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory, Response, send_file
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory
+from werkzeug.utils import secure_filename
 
 # ── App setup ──────────────────────────────────────────────────
 app = Flask(__name__, static_folder="frontend", static_url_path="")
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_INPUT = BASE_DIR / "photos"
-DEFAULT_OUTPUT = BASE_DIR / "output"
-CONFIG_PATH = BASE_DIR / "config.yaml"
+DATA_DIR = Path(os.environ.get("PHOTO_SEGREGATOR_DATA_DIR", BASE_DIR)).resolve()
+DEFAULT_INPUT = Path(os.environ.get("PHOTO_SEGREGATOR_INPUT_DIR", DATA_DIR / "photos")).resolve()
+DEFAULT_OUTPUT = Path(os.environ.get("PHOTO_SEGREGATOR_OUTPUT_DIR", DATA_DIR / "output")).resolve()
+CONFIG_PATH = Path(os.environ.get("PHOTO_SEGREGATOR_CONFIG", DATA_DIR / "config.yaml")).resolve()
+ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff", ".tif"}
+app.config["MAX_CONTENT_LENGTH"] = int(os.environ.get("PHOTO_SEGREGATOR_MAX_UPLOAD_MB", "2048")) * 1024 * 1024
+
+
+def ensure_runtime_paths():
+    """Create persistent runtime folders and seed config for Docker/data-volume use."""
+    DEFAULT_INPUT.mkdir(parents=True, exist_ok=True)
+    DEFAULT_OUTPUT.mkdir(parents=True, exist_ok=True)
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        bundled_config = BASE_DIR / "config.yaml"
+        if bundled_config.exists() and bundled_config.resolve() != CONFIG_PATH:
+            CONFIG_PATH.write_text(bundled_config.read_text(encoding="utf-8"), encoding="utf-8")
+
+
+ensure_runtime_paths()
 
 # ── Pipeline state (shared across threads) ─────────────────────
 pipeline_state = {
@@ -156,6 +173,8 @@ def api_run():
             from main import run_pipeline
 
             config = load_config(str(CONFIG_PATH))
+            config["input_dir"] = input_dir
+            config["output_dir"] = output_dir
 
             # Attach progress handler
             logger = logging.getLogger("photo_segregator")
@@ -190,6 +209,10 @@ def api_run():
                 error=str(e),
                 end_time=time.time(),
             )
+        finally:
+            logger = logging.getLogger("photo_segregator")
+            if "handler" in locals() and handler in logger.handlers:
+                logger.removeHandler(handler)
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -291,7 +314,9 @@ def api_cluster_photos(cluster_id):
 @app.route("/api/photos/<path:filepath>")
 def api_serve_photo(filepath):
     """Serve a photo from the output directory."""
-    full_path = DEFAULT_OUTPUT / filepath
+    full_path = _safe_child_path(DEFAULT_OUTPUT, filepath)
+    if full_path is None:
+        return jsonify({"error": "Invalid path"}), 400
     if not full_path.exists() or not full_path.is_file():
         return jsonify({"error": "File not found"}), 404
 
@@ -301,7 +326,9 @@ def api_serve_photo(filepath):
 @app.route("/api/input-photos/<path:filepath>")
 def api_serve_input_photo(filepath):
     """Serve a photo from the input directory."""
-    full_path = DEFAULT_INPUT / filepath
+    full_path = _safe_child_path(DEFAULT_INPUT, filepath)
+    if full_path is None:
+        return jsonify({"error": "Invalid path"}), 400
     if not full_path.exists() or not full_path.is_file():
         return jsonify({"error": "File not found"}), 404
 
@@ -428,7 +455,11 @@ def api_upload():
     uploaded = []
     for f in request.files.getlist("files"):
         if f.filename:
-            safe_name = f.filename
+            safe_name = secure_filename(f.filename)
+            if not safe_name:
+                continue
+            if Path(safe_name).suffix.lower() not in ALLOWED_IMAGE_EXTENSIONS:
+                continue
             dest = DEFAULT_INPUT / safe_name
             # Avoid overwriting
             if dest.exists():
@@ -497,6 +528,17 @@ def api_input_photos():
 
 # ── Helpers ────────────────────────────────────────────────────
 
+def _safe_child_path(root: Path, requested_path: str) -> Path | None:
+    """Resolve a user-supplied child path without allowing directory traversal."""
+    try:
+        root = root.resolve()
+        candidate = (root / requested_path).resolve()
+        candidate.relative_to(root)
+        return candidate
+    except (OSError, ValueError):
+        return None
+
+
 def _get_output_stats():
     """Read output directory for quick stats."""
     stats = {
@@ -551,8 +593,10 @@ def _get_output_stats():
 
 # ── Main ───────────────────────────────────────────────────────
 if __name__ == "__main__":
+    host = os.environ.get("FLASK_HOST", "0.0.0.0")
+    port = int(os.environ.get("FLASK_PORT", "5000"))
     print("\n  +==========================================+")
     print("  |   Photo Segregator -- Web UI             |")
-    print("  |   http://localhost:5000                  |")
+    print(f"  |   http://localhost:{port:<5}                 |")
     print("  +==========================================+\n")
-    app.run(debug=True, port=5000, threaded=True)
+    app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1", host=host, port=port, threaded=True)
