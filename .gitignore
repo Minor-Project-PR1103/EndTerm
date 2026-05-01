@@ -11,6 +11,8 @@ env/
 .env
 
 data/
+output/
+photos/
 calibration_temp/
 
 *.log
